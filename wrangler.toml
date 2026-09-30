@@ -13,6 +13,10 @@ MAX_RETRY_ATTEMPTS = "3"
 RETRY_BASE_DELAY_MS = "50"
 CIRCUIT_FAILURE_THRESHOLD = "5"
 CIRCUIT_COOLDOWN_MS = "30000"
+PORTAL_OS_KERNEL_URL = "https://max-os-1.maxchaz1.workers.dev
+
+
+
 
 [[services]]
 binding = "KERNEL_SERVICE"
