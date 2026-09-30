@@ -1,11 +1,12 @@
 import type { MiddlewareHandler } from 'hono';
-import { MaxOsError, toErrorResponse } from '../errors';
+import { MaxOsError, toErrorResponse } from '../resilience/errors';
 import { enforceGovernance } from '../governance/enforcer';
 import { enforceIdentity } from '../identity/enforcer';
 import { defaultLogger, type StructuredLogger } from '../observability/logger';
 import { defaultMetrics, type Metrics } from '../observability/metrics';
 import { createObservabilityContext } from '../observability/tracing';
 import { isJsonObject } from '../stable';
+import { JwtVerificationError, verifyJwtToken } from './jwt';
 import type {
   EnforcedEnvelope,
   Envelope,
@@ -55,6 +56,9 @@ export function parseEnvelope(value: unknown): Envelope {
   if (typeof candidate.type !== 'string' || candidate.type.trim().length === 0) {
     throw new MaxOsError('INVALID_ENVELOPE', 'Envelope type must be a non-empty string', 400);
   }
+  if (typeof candidate.lane !== 'string' || candidate.lane.trim().length === 0) {
+    throw new MaxOsError('INVALID_ENVELOPE', 'Envelope lane must be a non-empty string', 400);
+  }
   if (!isJsonObject(candidate.payload)) {
     throw new MaxOsError('INVALID_ENVELOPE', 'Envelope payload must be a JSON object', 400);
   }
@@ -76,6 +80,7 @@ export function parseEnvelope(value: unknown): Envelope {
   return {
     id: candidate.id,
     type: candidate.type,
+    lane: candidate.lane,
     payload: candidate.payload,
     identity: candidate.identity,
     governanceContext: candidate.governanceContext,
@@ -111,11 +116,47 @@ export function createEnforcementMiddleware(
     let requestLogger = logger;
     try {
       try {
+        // Phase-12: Verify JWT before parsing envelope
+        const authHeader = context.req.header('Authorization');
+        let identity: IdentityEnvelope;
+        try {
+          identity = await verifyJwtToken(
+            authHeader,
+            context.env.JWT_SECRET,
+            context.env.JWT_ISSUER,
+            context.env.JWT_AUDIENCE,
+          );
+        } catch (jwtError) {
+          const code = jwtError instanceof JwtVerificationError ? jwtError.code : 'INVALID_TOKEN';
+          metrics.increment('maxos_failures_total', { stage: 'jwt_verification' });
+          requestLogger.warn('jwt.verification.failed', {
+            errorCode: code,
+            message: String(jwtError),
+          });
+          return toErrorResponse(
+            new MaxOsError('IDENTITY_INVALID', `JWT verification failed: ${String(jwtError)}`, 401),
+          );
+        }
+
+        // Parse envelope from request body
         const envelope = parseEnvelope(await context.req.json<unknown>());
-        const observability = await createObservabilityContext(envelope.id, logger, metrics);
+
+        // Verify that the request identity matches the envelope identity
+        if (envelope.identity.id !== identity.id) {
+          throw new MaxOsError(
+            'IDENTITY_INVALID',
+            `Request identity does not match envelope identity: ${identity.id} !== ${envelope.identity.id}`,
+            401,
+          );
+        }
+
+        // Use verified JWT identity
+        const enrolledEnvelope: Envelope = { ...envelope, identity };
+
+        const observability = await createObservabilityContext(enrolledEnvelope.id, logger, metrics);
         requestLogger = observability.logger;
         const span = await observability.trace.startSpan('enforcement');
-        const enforced = enforceEnvelope(envelope, context.env);
+        const enforced = enforceEnvelope(enrolledEnvelope, context.env);
         enforced.metadata.trace = observability.trace.metadata();
         observability.logger.info('enforcement.allowed', {
           enforcement: 'allowed',
