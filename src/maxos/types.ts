@@ -72,6 +72,7 @@ export type EnvelopeMetadata = {
 export type Envelope = {
   id: string;
   type: string;
+  lane: string;
   payload: JsonObject;
   identity: IdentityEnvelope;
   governanceContext: GovernanceEnvelope;
@@ -88,7 +89,7 @@ export type EnforcedEnvelope = Envelope & {
   };
 };
 
-export type Lane = 'governance' | 'identity' | 'sim' | 'tec' | 'universe';
+export type Lane = 'governance' | 'identity' | 'sim' | 'tec' | 'universe' | 'planetary' | 'umbrella' | 'timeline' | 'diff' | 'replay';
 
 export type LaneResponse<TLane extends Lane = Lane, TData extends JsonValue = JsonValue> = {
   ok: true;
@@ -142,6 +143,10 @@ export type MaxOsBindings = {
   RETRY_BASE_DELAY_MS: string;
   CIRCUIT_FAILURE_THRESHOLD: string;
   CIRCUIT_COOLDOWN_MS: string;
+  PORTAL_OS_KERNEL_URL: string;
+  JWT_SECRET: string;
+  JWT_ISSUER: string;
+  JWT_AUDIENCE: string;
 };
 
 export type MaxOsVariables = {
